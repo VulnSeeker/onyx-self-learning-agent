@@ -146,7 +146,12 @@ class TrainingPlan(BaseModel):
 
 @dataclass
 class SkillRecord:
-    """A row in the skill registry table."""
+    """A row in the skill registry table.
+
+    Fields:
+        usage_count: how many times this skill has been used (for eviction decisions)
+        last_used:   ISO timestamp of the most recent use, or None if never used
+    """
 
     skill_id: str
     name: str
@@ -156,6 +161,8 @@ class SkillRecord:
     updated_at: str
     entry_count: int = 0
     spec: dict[str, Any] = field(default_factory=dict)
+    usage_count: int = 0
+    last_used: Optional[str] = None
 
 
 @dataclass
