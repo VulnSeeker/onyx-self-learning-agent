@@ -61,18 +61,6 @@ LLM_PROVIDERS = [
         "model": "command-r-plus-08-2024",
         "api_key": _env_str("COHERE_API_KEY", ""),
     },
-    {
-        "name": "mistral",
-        "base_url": "https://api.mistral.ai/v1",
-        "model": "mistral-small-latest",
-        "api_key": _env_str("MISTRAL_API_KEY", ""),
-    },
-    {
-        "name": "gemini",
-        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
-        "model": "gemini-flash-latest",
-        "api_key": _env_str("GEMINI_API_KEY", ""),
-    },
 ]
 
 # Drop providers with no key

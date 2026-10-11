@@ -51,6 +51,23 @@ TASKS = [
 ]
 
 
+HARD_TASKS = [
+    {"id": "h1", "category": "synthesis",
+     "prompt": "Across all the sources you have read about Docker, what are the top 3 anti-patterns developers fall into, and why?"},
+    {"id": "h2", "category": "synthesis",
+     "prompt": "Compare the Git branching strategies you have learned. Recommend one for a 3-person startup and justify the choice."},
+    {"id": "h3", "category": "synthesis",
+     "prompt": "Combine the Docker best practices from earlier sources into a single deployment checklist for a Python Flask app."},
+    {"id": "h4", "category": "synthesis",
+     "prompt": "Given what you know about Python asyncio and decorators, explain how to write an async-aware timing decorator."},
+    {"id": "h5", "category": "synthesis",
+     "prompt": "You learned Python fundamentals and Git basics earlier. How would you teach both to a beginner in a single 30-minute session?"},
+]
+
+# Extend the main task list with the harder synthesis tasks
+TASKS = TASKS + HARD_TASKS
+
+
 @dataclass
 class TaskResult:
     task_id: str
@@ -238,3 +255,93 @@ if __name__ == "__main__":
     print_table(run)
     path = save_run(run)
     print(f"\n✅ Saved: {path}")
+
+
+# ============================================================
+# Multi-policy runner (for results paper)
+# ============================================================
+
+def run_policy(policy_name: str, tasks: list, repeat: int = 3) -> list:
+    """
+    Run all tasks under a single memory policy, repeated N times.
+
+    Policies:
+      cold   — fresh dir per task (no memory)
+      warm   — user-guided eviction (default MemoryManager behavior)
+      fifo   — evict oldest skill
+      lru    — evict least-recently-used skill
+      random — evict a random skill
+    """
+    results = []
+
+    for run_idx in range(repeat):
+        print(f"\n{'='*60}")
+        print(f"POLICY: {policy_name}  RUN: {run_idx+1}/{repeat}")
+        print(f"{'='*60}")
+
+        # Choose data dir
+        if policy_name == "cold":
+            import tempfile
+            data_dir = tempfile.mkdtemp(prefix=f"bench-cold-{run_idx}-")
+        else:
+            data_dir = f"/content/onyx-benchmark/policy-{policy_name}"
+            Path(data_dir).mkdir(parents=True, exist_ok=True)
+
+        os.environ["DATA_DIR"] = data_dir
+        os.environ.pop("EXTRACT_DELAY_SECONDS", None)
+        os.environ.pop("MAX_SKILLS", None)
+        _reload_onyx()
+
+        from onyx.agent import Onyx
+        from onyx.scoring import AnswerScorer
+        ox = Onyx()
+        scorer = AnswerScorer(ox.llm)
+
+        # Wire eviction policy into the memory manager
+        if policy_name != "cold":
+            try:
+                from onyx.memory import EVICTION_POLICIES
+                policy_fn = EVICTION_POLICIES.get(policy_name)
+
+                if policy_fn is not None:
+                    # Monkeypatch check_capacity to use the policy
+                    original_check = ox.memory.check_capacity
+                    def patched_check(on_full=None, new_skill_id="", _fn=policy_fn, _orig=original_check):
+                        if not ox.memory.is_full():
+                            return None
+                        skills = ox.memory.registry.list_with_stats()
+                        return _fn(skills, new_skill_id)
+                    ox.memory.check_capacity = patched_check
+            except Exception as e:
+                print(f"  [warn] could not wire policy {policy_name}: {e}")
+
+        for task in tasks:
+            r = _run_one(ox, scorer, task, policy_name)
+            results.append(r)
+            print(f"  {task['id']:<5} score={r.score}  time={r.elapsed_seconds:.1f}s  ctx={r.context_used}")
+            if TASK_DELAY_SECONDS > 0:
+                time.sleep(TASK_DELAY_SECONDS)
+
+    return results
+
+
+def save_policy_results(policy_name: str, results: list) -> str:
+    """Save a policy run's results to disk."""
+    import json
+    out_dir = Path("/content/onyx-benchmark/results")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    filename = out_dir / f"policy-{policy_name}.json"
+
+    payload = [
+        {
+            "task_id": r.task_id, "category": r.category, "prompt": r.prompt,
+            "policy": r.condition, "score": r.score,
+            "score_reason": r.score_reason,
+            "elapsed_seconds": r.elapsed_seconds,
+            "context_used": r.context_used, "error": r.error,
+        }
+        for r in results
+    ]
+    with open(filename, "w") as f:
+        json.dump(payload, f, indent=2)
+    return str(filename)

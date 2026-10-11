@@ -21,6 +21,25 @@ from onyx.config import CONFIG, Config, LLM_PROVIDERS
 
 log = logging.getLogger("onyx.llm")
 
+# Global counter for total seconds spent waiting on rate limits.
+# Reset per task by calling reset_wait_timer().
+_RATE_LIMIT_WAIT_SECONDS = 0.0
+
+
+def reset_wait_timer():
+    global _RATE_LIMIT_WAIT_SECONDS
+    _RATE_LIMIT_WAIT_SECONDS = 0.0
+
+
+def get_wait_seconds() -> float:
+    return _RATE_LIMIT_WAIT_SECONDS
+
+
+def _record_wait(seconds: float):
+    global _RATE_LIMIT_WAIT_SECONDS
+    _RATE_LIMIT_WAIT_SECONDS += seconds
+
+
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
 
@@ -87,19 +106,29 @@ class LLMClient:
         self._current = 0
 
     def _call_one(self, provider, system, user, temperature, max_tokens):
-        with self._lock:
-            resp = provider["client"].chat.completions.create(
-                model=provider["model"],
-                temperature=temperature,
-                max_tokens=max_tokens,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-            )
-        if not resp.choices:
-            raise LLMResponseError("no choices")
-        return (resp.choices[0].message.content or "").strip()
+        import time as _time
+        _t0 = _time.time()
+        try:
+            with self._lock:
+                resp = provider["client"].chat.completions.create(
+                    model=provider["model"],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                )
+            if not resp.choices:
+                raise LLMResponseError("no choices")
+            return (resp.choices[0].message.content or "").strip()
+        finally:
+            # Track total time spent inside provider calls
+            _elapsed = _time.time() - _t0
+            # If a call took >5s, assume most of it was waiting
+            # (rate-limit wait or slow provider)
+            if _elapsed > 5:
+                _record_wait(_elapsed - 2)  # estimate 2s real work
 
     def chat(self, system, user, *, temperature=0.2, max_tokens=None):
         system = (
@@ -111,9 +140,11 @@ class LLMClient:
         errors = []
         n = len(self._clients)
 
+        import time as _time
         for attempt in range(n):
             idx = (self._current + attempt) % n
             provider = self._clients[idx]
+            _start = _time.time()
             try:
                 text = self._call_one(provider, system, user, temperature, max_tokens)
                 if not text:
@@ -164,4 +195,4 @@ class LLMClient:
         return [{"name": c["name"], "model": c["model"]} for c in self._clients]
 
 
-__all__ = ["LLMClient", "LLMResponseError", "parse_json_loose"]
+__all__ = ["LLMClient", "LLMResponseError", "parse_json_loose", "reset_wait_timer", "get_wait_seconds"]

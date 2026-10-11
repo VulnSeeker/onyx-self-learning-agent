@@ -195,4 +195,47 @@ class MemoryManager:
         return sorted(skills, key=sort_key)[0]["skill_id"]
 
 
-__all__ = ["MemoryManager", "MemoryFullError", "EvictionCallback", "DEFAULT_MAX_SKILLS"]
+
+# ---------------------------------------------------------------------------
+# Eviction policies
+# ---------------------------------------------------------------------------
+
+def _policy_fifo(skills: list[dict], new_skill_id: str = "") -> str | None:
+    """Evict the oldest skill (by created_at)."""
+    if not skills:
+        return None
+    return sorted(skills, key=lambda s: s.get("created_at", ""))[0]["skill_id"]
+
+
+def _policy_lru(skills: list[dict], new_skill_id: str = "") -> str | None:
+    """Evict the least-recently-used skill (by last_used)."""
+    if not skills:
+        return None
+    return sorted(
+        skills,
+        key=lambda s: s.get("last_used") or "0000-00-00",
+    )[0]["skill_id"]
+
+
+def _policy_random(skills: list[dict], new_skill_id: str = "") -> str | None:
+    """Evict a random skill."""
+    if not skills:
+        return None
+    import random
+    return random.choice(skills)["skill_id"]
+
+
+def _policy_user(skills: list[dict], new_skill_id: str = "") -> str | None:
+    """Placeholder — user-guided policy is handled by callback."""
+    return None
+
+
+EVICTION_POLICIES = {
+    "fifo": _policy_fifo,
+    "lru": _policy_lru,
+    "random": _policy_random,
+    "user": _policy_user,
+}
+
+
+__all__ = ["MemoryManager", "MemoryFullError", "EvictionCallback", "DEFAULT_MAX_SKILLS", "EVICTION_POLICIES"]
