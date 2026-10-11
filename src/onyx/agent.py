@@ -39,6 +39,7 @@ from onyx.bootstrapper import SkillBootstrapper
 from onyx.config import CONFIG, Config
 from onyx.crawler import Crawler
 from onyx.llm import LLMClient
+from onyx.memory import MemoryManager, MemoryFullError
 from onyx.model_builder import ModelBuilder, ModelBuilderError
 from onyx.orchestrator import TaskOrchestrator, TaskResult
 from onyx.runtime import RuntimeAgent, SkillNotFoundError
@@ -98,6 +99,12 @@ class Onyx:
         # Storage
         self.registry = Registry(cfg)
         self.vectors = VectorStore(cfg)
+
+        # Bounded memory
+        self.memory = MemoryManager(
+            self.registry, self.vectors,
+            max_skills=cfg.max_skills, cfg=cfg,
+        )
 
         # Domain logic
         self.bootstrapper = SkillBootstrapper(
@@ -226,6 +233,22 @@ class Onyx:
     def skill_entries(self, skill_id: str, limit: int = 100) -> list[dict[str, Any]]:
         """List knowledge metadata for a skill."""
         return self.registry.list_knowledge_meta(skill_id, limit=limit)
+
+    # ------------------------------------------------------------------
+    # Bounded memory
+    # ------------------------------------------------------------------
+
+    def memory_stats(self) -> dict:
+        """Return capacity + usage stats for all skills."""
+        return self.memory.stats()
+
+    def evict(self, skill_id: str) -> bool:
+        """Manually delete a skill (vectors + registry)."""
+        return self.memory.evict(skill_id)
+
+    def capacity(self) -> dict[str, int]:
+        """Return {used, cap, free}."""
+        return self.memory.capacity()
 
     # ------------------------------------------------------------------
     # Model building

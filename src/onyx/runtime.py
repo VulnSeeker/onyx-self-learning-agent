@@ -144,6 +144,9 @@ class RuntimeAgent:
                 f"Skill '{skill_id}' not found. Learn it first with: onyx learn {skill_id}"
             )
 
+        # Record usage — this drives eviction decisions in MemoryManager
+        self.registry.record_use(skill_id)
+
         # 1. Retrieve
         cb("Retrieving knowledge...")
         context = self._retrieve(skill_id, task, k=8)

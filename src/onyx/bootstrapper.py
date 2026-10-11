@@ -24,6 +24,7 @@ from typing import Callable, Optional
 from onyx.config import CONFIG, Config
 from onyx.crawler import Crawler
 from onyx.llm import LLMClient, LLMResponseError
+from onyx.memory import EvictionCallback, MemoryFullError, MemoryManager
 from onyx.schemas import (
     DedupeAction,
     KnowledgeEntry,
@@ -126,12 +127,31 @@ class SkillBootstrapper:
         self.crawler = crawler
         self.cfg = cfg
 
+        # Bounded memory — capacity check happens inside learn()
+        self.memory = MemoryManager(
+            registry, vectors,
+            max_skills=cfg.max_skills, cfg=cfg,
+        )
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def learn(self, skill_name: str, progress: ProgressCB = None) -> dict:
-        """Learn a skill. Returns a summary dict."""
+    def learn(
+        self,
+        skill_name: str,
+        progress: ProgressCB = None,
+        on_memory_full: Optional[EvictionCallback] = None,
+    ) -> dict:
+        """Learn a skill. Returns a summary dict.
+
+        Args:
+            skill_name: The skill to learn.
+            progress: Optional progress callback.
+            on_memory_full: Optional callback invoked when the skill cap is
+                reached. Receives the list of skill stats and must return
+                the skill_id to evict (or None to abort).
+        """
         cb = progress or (lambda _msg: None)
 
         skill_name = (skill_name or "").strip()
@@ -143,7 +163,22 @@ class SkillBootstrapper:
         skill_id = _slugify(spec.name)
         cb(f"Spec ready: {spec.name} ({len(spec.subtopics)} subtopics)")
 
-        if self.registry.has(skill_id):
+        is_new_skill = not self.registry.has(skill_id)
+
+        if is_new_skill:
+            # 1a. Capacity check BEFORE we spend API calls learning
+            try:
+                evict_id = self.memory.check_capacity(
+                    on_full=on_memory_full,
+                    new_skill_id=skill_id,
+                )
+                if evict_id:
+                    cb(f"🗑️  Memory full — evicting '{evict_id}'")
+                    self.memory.evict(evict_id)
+            except MemoryFullError as e:
+                cb(f"❌ Cannot add '{skill_id}': memory full ({e.used}/{e.cap})")
+                raise
+        else:
             cb(f"Skill '{skill_id}' exists — appending new knowledge")
 
         # 2. Find sources

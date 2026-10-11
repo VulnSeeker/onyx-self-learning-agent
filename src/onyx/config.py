@@ -107,6 +107,7 @@ class Config:
     dedupe_distance: float
     max_chars_per_page: int
     log_level: str
+    max_skills: int
 
     # ------------------------------------------------------------------
     # Factory
@@ -144,6 +145,7 @@ class Config:
             dedupe_distance=_env_float("DEDUPE_DISTANCE", 0.12),
             max_chars_per_page=_env_int("MAX_CHARS_PER_PAGE", 12000),
             log_level=_env_str("LOG_LEVEL", "INFO").upper(),
+            max_skills=_env_int("MAX_SKILLS", 20),
         )
 
     # ------------------------------------------------------------------
