@@ -128,9 +128,9 @@ class Config:
             p.mkdir(parents=True, exist_ok=True)
 
         return cls(
-            openai_api_key=_env_str("OPENAI_API_KEY", "ollama"),
-            openai_base_url=_env_str("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/"),
-            llm_model=_env_str("LLM_MODEL", "openai/gpt-oss-120b"),
+            openai_api_key=_env_str("GEMINI_API_KEY", _env_str("OPENAI_API_KEY", "")),
+            openai_base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            llm_model="gemini-flash-latest",
             embed_model=_env_str("EMBED_MODEL", "text-embedding-3-small"),
             tavily_api_key=_env_opt_str("TAVILY_API_KEY"),
             data_dir=data_dir,
@@ -147,7 +147,7 @@ class Config:
             max_chars_per_page=_env_int("MAX_CHARS_PER_PAGE", 12000),
             log_level=_env_str("LOG_LEVEL", "INFO").upper(),
             max_skills=_env_int("MAX_SKILLS", 20),
-            extract_delay_seconds=_env_int("EXTRACT_DELAY_SECONDS", 20),
+            extract_delay_seconds=_env_int("EXTRACT_DELAY_SECONDS", 4),
         )
 
     # ------------------------------------------------------------------

@@ -299,7 +299,10 @@ class TaskOrchestrator:
 
     def _analyze_task(self, task: str) -> TaskAnalysis:
         try:
-            data = self.llm.chat_json(_ANALYZE_SYSTEM, f"Task: {task}")
+            data = self.llm.chat_json(
+                _ANALYZE_SYSTEM, f"Task: {task}",
+                temperature=0.0,  # deterministic for benchmarks
+            )
         except LLMResponseError as e:
             log.warning("task analysis failed: %s", e)
             return TaskAnalysis()
