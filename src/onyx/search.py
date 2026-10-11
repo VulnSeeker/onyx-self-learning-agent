@@ -1,9 +1,14 @@
 """
-Web search client for Onyx.
+Multi-engine web search for Onyx. Zero cost, no API keys, no credit cards.
 
-Uses the `ddgs` package (the maintained successor to duckduckgo_search).
-Adds a relevance filter so junk results (wrong domain, unrelated pages)
-are dropped before they reach the crawler.
+Fallback chain (tried in order, first success wins):
+  1. webless        — fuses DDG + Mojeek + Bing + Wikipedia via RRF (pure Python)
+  2. ddgs           — DuckDuckGo with retry
+  3. SearXNG HTML   — scrape a public instance's HTML output (no JSON needed)
+  4. Jina Reader    — s.jina.ai keyless search
+
+Every result passes through a relevance filter so junk domains never
+reach the crawler.
 """
 
 from __future__ import annotations
@@ -13,13 +18,32 @@ import re
 import time
 from typing import Optional
 
+import requests
+
 from onyx.config import CONFIG, Config
 from onyx.schemas import Source
 
 log = logging.getLogger("onyx.search")
 
 
-# Words that are too common to count for relevance
+# SearXNG instances — HTML scrape mode (JSON is disabled on most publics)
+_SEARXNG_INSTANCES = [
+    "https://searx.be",
+    "https://search.inetol.net",
+    "https://searx.tiekoetter.com",
+    "https://baresearch.org",
+    "https://priv.au",
+    "https://searxng.site",
+]
+
+_JUNK_DOMAINS = (
+    "fedex.com", "ups.com", "dhl.com",
+    "pinterest.", "quora.com", "facebook.com",
+    "instagram.com", "tiktok.com",
+    "youtube.com", "youtu.be",
+    "reddit.com",
+)
+
 _STOPWORDS = {
     "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
     "of", "with", "by", "from", "up", "about", "into", "through", "is",
@@ -28,18 +52,22 @@ _STOPWORDS = {
     "how", "what", "when", "where", "why", "who", "which",
 }
 
+_UA = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 OnyxAgent/0.1"
+)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _query_tokens(query: str) -> set[str]:
-    """Return meaningful lowercase tokens from a query."""
     words = re.findall(r"[a-zA-Z0-9]+", query.lower())
     return {w for w in words if w not in _STOPWORDS and len(w) > 2}
 
 
 def _relevance(title: str, url: str, query_tokens: set[str]) -> float:
-    """
-    Score a result between 0.0 and 1.0.
-    Fraction of query tokens that appear in the title, URL, or domain.
-    """
     if not query_tokens:
         return 1.0
     haystack = (title + " " + url).lower()
@@ -47,142 +75,240 @@ def _relevance(title: str, url: str, query_tokens: set[str]) -> float:
     return hits / len(query_tokens)
 
 
+def _is_junk(url: str) -> bool:
+    return any(bad in url for bad in _JUNK_DOMAINS)
+
+
+def _run_async(coro):
+    """
+    Run an async coroutine from sync code, even inside a running event loop
+    (Jupyter/Colab). Falls back to asyncio.run() if nothing is looping.
+    """
+    import asyncio
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is None:
+        return asyncio.run(coro)
+
+    # We're inside a loop (Colab/Jupyter). Try nest_asyncio.
+    try:
+        import nest_asyncio
+        nest_asyncio.apply()
+        return loop.run_until_complete(coro)
+    except ImportError:
+        import threading
+
+        result = {}
+
+        def runner():
+            try:
+                result["value"] = asyncio.run(coro)
+            except Exception as e:
+                result["error"] = e
+
+        t = threading.Thread(target=runner)
+        t.start()
+        t.join()
+        if "error" in result:
+            raise result["error"]
+        return result.get("value")
+
+
 class SearchClient:
-    """Web search via ddgs with a relevance filter."""
+    """Multi-engine search with failover. All engines are free and keyless."""
 
     def __init__(self, cfg: Config = CONFIG) -> None:
         self.cfg = cfg
         self._last_call = 0.0
+        self._session = requests.Session()
+        self._session.headers.update({"User-Agent": _UA})
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     def search(self, query: str, max_results: int = 5) -> list[Source]:
-        """
-        Search the web. Returns filtered results as Source objects.
-        Drops results whose title/URL doesn't overlap the query.
-        """
         query = (query or "").strip()
         if not query:
             return []
 
-        # Be polite to the search backend
         elapsed = time.time() - self._last_call
         if elapsed < 1.0:
             time.sleep(1.0 - elapsed)
 
-        raw = self._raw_search(query, max_results * 3)
+        # Engine chain — first one that returns results wins
+        engines = [
+            ("webless", self._webless_search),
+            ("ddgs", self._ddgs_search),
+            ("searxng-html", self._searxng_html_search),
+            ("jina", self._jina_search),
+        ]
+
+        raw: list[dict] = []
+        chosen = "none"
+        for name, fn in engines:
+            try:
+                raw = fn(query, max_results * 3)
+                if raw:
+                    chosen = name
+                    log.info("engine=%s returned %d results for %s",
+                             name, len(raw), query[:50])
+                    break
+                log.debug("engine=%s returned 0", name)
+            except Exception as e:  # noqa: BLE001
+                log.debug("engine=%s failed: %s", name, e)
+
         self._last_call = time.time()
 
         if not raw:
-            log.warning("search returned 0 raw results for: %s", query[:60])
+            log.warning("all search engines failed for: %s", query[:60])
             return []
 
+        # Filter + rank
         query_tokens = _query_tokens(query)
         scored: list[tuple[float, Source]] = []
-
         for r in raw:
             title = r.get("title") or ""
-            url = r.get("href") or r.get("url") or ""
-            snippet = r.get("body") or r.get("snippet") or ""
-
-            if not url:
+            url = r.get("url") or r.get("href") or ""
+            snippet = r.get("snippet") or r.get("body") or ""
+            if not url or _is_junk(url):
                 continue
-
-            # Skip common junk domains
-            if any(bad in url for bad in (
-                "fedex.com", "ups.com", "dhl.com",
-                "pinterest.", "quora.com",
-            )):
-                continue
-
             score = _relevance(title, url, query_tokens)
             scored.append((score, Source(title=title, url=url, snippet=snippet)))
 
-        # Sort by score, keep only results with at least 1 matching token
         scored.sort(key=lambda x: x[0], reverse=True)
         filtered = [src for s, src in scored if s > 0][:max_results]
-
         if not filtered and scored:
-            # Nothing matched, but we have raw results — take the top ones anyway
-            log.warning(
-                "relevance filter dropped all results for %s; using top raw",
-                query[:60],
-            )
             filtered = [src for _, src in scored[:max_results]]
 
-        log.debug("search: %d raw -> %d filtered for %s", len(raw), len(filtered), query[:60])
+        log.info("search [%s]: %d raw -> %d filtered", chosen, len(raw), len(filtered))
         return filtered
 
     # ------------------------------------------------------------------
-    # Backends
+    # Engine 1: webless (fuses DDG + Mojeek + Bing + Wikipedia)
     # ------------------------------------------------------------------
 
-    def _raw_search(self, query: str, n: int) -> list[dict]:
-        """Try ddgs first, then a plain HTTP fallback."""
-        results = self._ddgs_search(query, n)
-        if results:
-            return results
+    def _webless_search(self, query: str, n: int) -> list[dict]:
+        try:
+            from webless import search
+        except ImportError:
+            log.debug("webless not installed")
+            return []
 
-        log.warning("ddgs returned nothing — trying fallback")
-        return self._fallback_search(query, n)
+        try:
+            result = _run_async(search(query, limit=n))
+            if not result or not result.hits:
+                if result and result.failed:
+                    log.debug("webless: all engines failed — %s", result.failed)
+                return []
+            log.debug(
+                "webless: succeeded=%s, %d hits",
+                result.succeeded, len(result.hits),
+            )
+            return [
+                {"title": h.title, "url": h.url, "snippet": h.snippet}
+                for h in result.hits
+            ]
+        except Exception as e:  # noqa: BLE001
+            log.debug("webless failed: %s", e)
+            return []
+
+    # ------------------------------------------------------------------
+    # Engine 2: ddgs (DuckDuckGo with retry)
+    # ------------------------------------------------------------------
 
     def _ddgs_search(self, query: str, n: int) -> list[dict]:
-        """Use the `ddgs` package. Retries once on 'No results found'."""
         try:
             from ddgs import DDGS
         except ImportError:
             try:
                 from duckduckgo_search import DDGS  # type: ignore
             except ImportError:
-                log.error("neither ddgs nor duckduckgo_search is installed")
                 return []
 
-        # Try up to 2 times — first call often fails on rate limit
         for attempt in range(2):
             try:
                 with DDGS() as client:
                     hits = list(client.text(query, max_results=n))
                 if hits:
                     return hits
-                log.debug("ddgs returned empty (attempt %d) for: %s", attempt + 1, query[:50])
             except Exception as e:  # noqa: BLE001
-                log.warning("ddgs attempt %d failed: %s", attempt + 1, e)
-
+                log.debug("ddgs attempt %d failed: %s", attempt + 1, e)
             if attempt == 0:
-                time.sleep(2.0)  # wait before retrying
-
-        log.warning("ddgs gave up after 2 attempts: %s", query[:60])
+                time.sleep(2.0)
         return []
 
-    def _fallback_search(self, query: str, n: int) -> list[dict]:
-        """HTML scrape fallback — no external deps beyond requests."""
+    # ------------------------------------------------------------------
+    # Engine 3: SearXNG HTML scrape (JSON is disabled on most publics)
+    # ------------------------------------------------------------------
+
+    def _searxng_html_search(self, query: str, n: int) -> list[dict]:
         try:
-            import requests
             from bs4 import BeautifulSoup
         except ImportError:
             return []
 
-        url = "https://html.duckduckgo.com/html/"
-        try:
-            r = requests.post(
-                url,
-                data={"q": query},
-                headers={"User-Agent": "Mozilla/5.0"},
-                timeout=15,
-            )
-            soup = BeautifulSoup(r.text, "html.parser")
-            out = []
-            for result in soup.select(".result")[:n]:
-                link = result.select_one(".result__a")
-                snippet = result.select_one(".result__snippet")
-                if not link:
+        for instance in _SEARXNG_INSTANCES:
+            try:
+                r = self._session.post(
+                    f"{instance}/search",
+                    data={"q": query},
+                    timeout=15,
+                )
+                if r.status_code != 200:
                     continue
-                out.append({
-                    "title": link.get_text(strip=True),
-                    "href": link.get("href", ""),
-                    "body": snippet.get_text(strip=True) if snippet else "",
-                })
-            return out
+
+                soup = BeautifulSoup(r.text, "html.parser")
+                out = []
+                for art in soup.select("article.result")[:n]:
+                    a = art.select_one("h3 a") or art.select_one("a.url")
+                    if not a:
+                        continue
+                    title = a.get_text(strip=True)
+                    url = a.get("href", "")
+                    if url.startswith("/"):
+                        url = instance + url
+                    p = art.select_one("p.content")
+                    snippet = p.get_text(strip=True) if p else ""
+                    out.append({"title": title, "url": url, "snippet": snippet})
+
+                if out:
+                    log.info("searxng-html hit: %s (%d)", instance, len(out))
+                    return out
+            except Exception as e:  # noqa: BLE001
+                log.debug("searxng-html %s failed: %s", instance, e)
+        return []
+
+    # ------------------------------------------------------------------
+    # Engine 4: Jina Reader search (keyless, 20 RPM)
+    # ------------------------------------------------------------------
+
+    def _jina_search(self, query: str, n: int) -> list[dict]:
+        try:
+            r = self._session.get(
+                "https://s.jina.ai/",
+                params={"q": query},
+                headers={"Accept": "application/json", "X-Respond-With": "no-content"},
+                timeout=20,
+            )
+            if r.status_code != 200:
+                log.debug("jina: HTTP %d", r.status_code)
+                return []
+            items = r.json().get("data", [])[:n]
+            return [
+                {
+                    "title": it.get("title", ""),
+                    "url": it.get("url", ""),
+                    "snippet": it.get("description", ""),
+                }
+                for it in items if it.get("url")
+            ]
         except Exception as e:  # noqa: BLE001
-            log.warning("fallback search failed: %s", e)
+            log.debug("jina failed: %s", e)
             return []
 
 
