@@ -182,13 +182,30 @@ class Onyx:
     # Skills (explicit control)
     # ------------------------------------------------------------------
 
-    def learn(self, skill_name: str, progress: ProgressCB = None) -> dict[str, Any]:
-        """Bootstrap a new skill (or append to an existing one)."""
+    def learn(
+        self,
+        skill_name: str,
+        progress: ProgressCB = None,
+        on_memory_full=None,
+    ) -> dict[str, Any]:
+        """Bootstrap a new skill (or append to an existing one).
+
+        Args:
+            skill_name: The skill to learn.
+            progress: Optional progress callback.
+            on_memory_full: Optional eviction callback invoked when the
+                skill cap is reached. Receives the list of skill stats and
+                must return the skill_id to evict (or None to abort).
+        """
         skill_name = (skill_name or "").strip()
         if not skill_name:
             raise AgentError("skill_name is required")
         try:
-            return self.bootstrapper.learn(skill_name, progress=progress)
+            return self.bootstrapper.learn(
+                skill_name,
+                progress=progress,
+                on_memory_full=on_memory_full,
+            )
         except Exception as e:  # noqa: BLE001
             log.exception("learn failed for %s", skill_name)
             raise AgentError(f"learn failed: {e}") from e

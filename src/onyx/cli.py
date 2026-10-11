@@ -111,6 +111,34 @@ def _make_progress_cb():
 # Subcommand handlers
 # ---------------------------------------------------------------------------
 
+def _interactive_eviction(skills: list[dict], cap: int) -> "str | None":
+    """Prompt the user to choose which skill to evict. Returns skill_id or None."""
+    _print()
+    _rule("⚠ memory full — eviction required")
+    _print(f"Skill registry is at capacity ({len(skills)}/{cap}).")
+    _print()
+    _print(f"  {'#':>3}  {'skill_id':<40}  {'used':>5}  last used")
+    _print(f"  {'-'*3}  {'-'*40}  {'-'*5}  {'-'*24}")
+    for i, s in enumerate(skills, 1):
+        used = s.get("usage_count", 0)
+        last = s.get("last_used") or "never"
+        _print(f"  {i:>3}  {s['skill_id']:<40}  {used:>5}  {last}")
+    _print()
+    while True:
+        try:
+            choice = input("Evict which skill? Enter number, or 'c' to cancel: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            _print()
+            return None
+        if choice == "c":
+            return None
+        if choice.isdigit():
+            idx = int(choice) - 1
+            if 0 <= idx < len(skills):
+                return skills[idx]["skill_id"]
+        _print("Invalid choice. Try again.")
+
+
 def _cmd_task(args: argparse.Namespace) -> int:
     """Execute a natural-language task end-to-end (auto-learn + multi-skill)."""
     cb, progress = _make_progress_cb()
@@ -201,7 +229,25 @@ def _cmd_learn(args: argparse.Namespace) -> int:
     cb, progress = _make_progress_cb()
     try:
         with Onyx() as ox:
-            result = ox.learn(args.skill, progress=cb)
+            # Build eviction callback based on flags
+            if args.no_evict:
+                on_full = None  # Onyx will raise MemoryFullError
+            elif args.auto_evict:
+                def on_full(skills):
+                    suggestion = ox.memory.suggest_eviction()
+                    _print(f"  auto-evicting least-used: {suggestion}")
+                    return suggestion
+            else:
+                def on_full(skills):
+                    if progress:
+                        progress.stop()
+                    return _interactive_eviction(skills, ox.capacity()["cap"])
+
+            result = ox.learn(
+                args.skill,
+                progress=cb,
+                on_memory_full=on_full,
+            )
     except AgentError as e:
         if progress:
             progress.stop()
@@ -264,25 +310,84 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
 def _cmd_skills(_args: argparse.Namespace) -> int:
     with Onyx() as ox:
-        skills = ox.skills()
+        stats = ox.memory_stats()
 
-    if not skills:
-        _print("[yellow]No skills learned yet.[/yellow]" if _HAS_RICH else "No skills learned yet.")
+    if not stats["skills"]:
+        _print("No skills learned yet.")
         return 0
 
+    used = stats["used"]
+    cap = stats["cap"]
+
     if _HAS_RICH and _console is not None:
-        table = Table(title="Learned skills")
+        table = Table(title=f"Learned skills ({used}/{cap})")
         table.add_column("skill_id", style="cyan", no_wrap=True)
         table.add_column("name", style="bold")
         table.add_column("entries", justify="right")
-        table.add_column("updated", style="dim")
-        for s in skills:
-            table.add_row(s.skill_id, s.name, str(s.entry_count), s.updated_at)
+        table.add_column("used", justify="right", style="magenta")
+        table.add_column("last used", style="dim")
+        for s in stats["skills"]:
+            table.add_row(
+                s["skill_id"],
+                s.get("name") or "",
+                str(s.get("entry_count", 0)),
+                str(s.get("usage_count", 0)),
+                s.get("last_used") or "never",
+            )
         _console.print(table)
     else:
-        print(f"{'skill_id':<25} {'name':<30} {'entries':>8}  updated")
-        for s in skills:
-            print(f"{s.skill_id:<25} {s.name:<30} {s.entry_count:>8}  {s.updated_at}")
+        print(f"Learned skills ({used}/{cap})")
+        print(f"{'skill_id':<30} {'name':<25} {'entries':>8} {'used':>5}  last used")
+        for s in stats["skills"]:
+            print(f"{s['skill_id']:<30} {(s.get('name') or ''):<25} "
+                  f"{s.get('entry_count', 0):>8} {s.get('usage_count', 0):>5}  "
+                  f"{s.get('last_used') or 'never'}")
+    return 0
+
+
+def _cmd_stats(_args: argparse.Namespace) -> int:
+    """Show memory capacity and per-skill usage statistics."""
+    with Onyx() as ox:
+        stats = ox.memory_stats()
+
+    cap = stats["cap"]
+    used = stats["used"]
+    free = stats["free"]
+    is_full = stats["full"]
+
+    _rule("onyx memory")
+    _print(f"  skills      : {used} / {cap}")
+    _print(f"  free slots  : {free}")
+    status = "[bold red]FULL[/bold red]" if (is_full and _HAS_RICH) else ("FULL" if is_full else "ok")
+    _print(f"  status      : {status}")
+    _print()
+
+    if not stats["skills"]:
+        _print("No skills learned yet.")
+        return 0
+
+    if _HAS_RICH and _console is not None:
+        table = Table(title="Skill usage (sorted by usage, desc)")
+        table.add_column("#", justify="right", style="dim")
+        table.add_column("skill_id", style="cyan")
+        table.add_column("entries", justify="right")
+        table.add_column("used", justify="right", style="magenta")
+        table.add_column("last used", style="dim")
+        for i, s in enumerate(stats["skills"], 1):
+            table.add_row(
+                str(i),
+                s["skill_id"],
+                str(s.get("entry_count", 0)),
+                str(s.get("usage_count", 0)),
+                s.get("last_used") or "never",
+            )
+        _console.print(table)
+    else:
+        for i, s in enumerate(stats["skills"], 1):
+            print(f"  {i:>3}. {s['skill_id']:<35} "
+                  f"entries={s.get('entry_count', 0):<4} "
+                  f"used={s.get('usage_count', 0):<4} "
+                  f"last={s.get('last_used') or 'never'}")
     return 0
 
 
@@ -467,6 +572,16 @@ def build_parser() -> argparse.ArgumentParser:
     # learn
     p = sub.add_parser("learn", help="Bootstrap a new skill from web research")
     p.add_argument("skill", help="Skill name, e.g. 'OSINT'")
+    p.add_argument(
+        "--no-evict",
+        action="store_true",
+        help="Refuse to evict if memory is full (raises an error instead)",
+    )
+    p.add_argument(
+        "--auto-evict",
+        action="store_true",
+        help="Automatically evict the least-used skill if memory is full",
+    )
     p.set_defaults(func=_cmd_learn)
 
     # run
@@ -478,8 +593,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=_cmd_run)
 
     # skills
-    p = sub.add_parser("skills", help="List learned skills")
+    p = sub.add_parser("skills", help="List learned skills with usage")
     p.set_defaults(func=_cmd_skills)
+
+    # stats
+    p = sub.add_parser("stats", help="Show memory capacity and skill usage")
+    p.set_defaults(func=_cmd_stats)
 
     # show
     p = sub.add_parser("show", help="Show details of a learned skill")
