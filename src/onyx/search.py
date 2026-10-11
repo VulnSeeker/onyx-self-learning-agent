@@ -1,158 +1,189 @@
 """
-Web search for Onyx.
+Web search client for Onyx.
 
-Uses Tavily if `TAVILY_API_KEY` is set (better for agents — clean results),
-otherwise falls back to DuckDuckGo (free, no key required).
-
-Returns a list of `Source` dataclasses. Never raises on network errors —
-logs and returns [] so callers can degrade gracefully.
+Uses the `ddgs` package (the maintained successor to duckduckgo_search).
+Adds a relevance filter so junk results (wrong domain, unrelated pages)
+are dropped before they reach the crawler.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Optional
-
-import requests
 
 from onyx.config import CONFIG, Config
 from onyx.schemas import Source
 
 log = logging.getLogger("onyx.search")
 
-_USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 OnyxAgent/0.1"
-)
+
+# Words that are too common to count for relevance
+_STOPWORDS = {
+    "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
+    "of", "with", "by", "from", "up", "about", "into", "through", "is",
+    "are", "was", "were", "be", "been", "being", "have", "has", "had",
+    "do", "does", "did", "will", "would", "should", "could", "can", "may",
+    "how", "what", "when", "where", "why", "who", "which",
+}
 
 
-# ---------------------------------------------------------------------------
-# DuckDuckGo (lazy import — optional dependency)
-# ---------------------------------------------------------------------------
-
-def _load_ddg():
-    try:
-        from ddgs import DDGS  # type: ignore
-        return DDGS
-    except ImportError:
-        try:
-            from duckduckgo_search import DDGS  # type: ignore
-            return DDGS
-        except ImportError:
-            return None
+def _query_tokens(query: str) -> set[str]:
+    """Return meaningful lowercase tokens from a query."""
+    words = re.findall(r"[a-zA-Z0-9]+", query.lower())
+    return {w for w in words if w not in _STOPWORDS and len(w) > 2}
 
 
-# ---------------------------------------------------------------------------
-# SearchClient
-# ---------------------------------------------------------------------------
+def _relevance(title: str, url: str, query_tokens: set[str]) -> float:
+    """
+    Score a result between 0.0 and 1.0.
+    Fraction of query tokens that appear in the title, URL, or domain.
+    """
+    if not query_tokens:
+        return 1.0
+    haystack = (title + " " + url).lower()
+    hits = sum(1 for t in query_tokens if t in haystack)
+    return hits / len(query_tokens)
+
 
 class SearchClient:
-    """Tavily with DuckDuckGo fallback."""
+    """Web search via ddgs with a relevance filter."""
 
     def __init__(self, cfg: Config = CONFIG) -> None:
         self.cfg = cfg
-        self._session = requests.Session()
-        self._session.headers.update({
-            "User-Agent": _USER_AGENT,
-            "Accept": "application/json",
-        })
-        self._ddg = _load_ddg()
-        if not self._ddg and not cfg.tavily_api_key:
-            log.warning(
-                "No search backend available. Install duckduckgo-search "
-                "or set TAVILY_API_KEY."
-            )
+        self._last_call = 0.0
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
-    def search(self, query: str, max_results: int = 6) -> list[Source]:
-        """Return up to `max_results` sources for the query. Never raises."""
+    def search(self, query: str, max_results: int = 5) -> list[Source]:
+        """
+        Search the web. Returns filtered results as Source objects.
+        Drops results whose title/URL doesn't overlap the query.
+        """
         query = (query or "").strip()
         if not query:
             return []
 
-        if self.cfg.tavily_api_key:
-            try:
-                out = self._tavily(query, max_results)
-                if out:
-                    return out
-                log.debug("Tavily returned 0 results; trying DDG")
-            except Exception as e:  # noqa: BLE001
-                log.warning("Tavily failed (%s); falling back to DDG", e)
+        # Be polite to the search backend
+        elapsed = time.time() - self._last_call
+        if elapsed < 1.0:
+            time.sleep(1.0 - elapsed)
 
-        return self._ddg_search(query, max_results)
+        raw = self._raw_search(query, max_results * 3)
+        self._last_call = time.time()
 
-    # ------------------------------------------------------------------
-    # Tavily
-    # ------------------------------------------------------------------
-
-    def _tavily(self, query: str, max_results: int) -> list[Source]:
-        assert self.cfg.tavily_api_key is not None
-        r = self._session.post(
-            "https://api.tavily.com/search",
-            json={
-                "api_key": self.cfg.tavily_api_key,
-                "query": query,
-                "max_results": max_results,
-                "search_depth": "basic",
-                "include_raw_content": False,
-                "include_answer": False,
-            },
-            timeout=self.cfg.request_timeout,
-        )
-        r.raise_for_status()
-        payload = r.json()
-        out: list[Source] = []
-        for item in payload.get("results", []):
-            url = (item.get("url") or "").strip()
-            if not url:
-                continue
-            out.append(
-                Source(
-                    title=(item.get("title") or "").strip(),
-                    url=url,
-                    snippet=(item.get("content") or "").strip(),
-                )
-            )
-        return out[:max_results]
-
-    # ------------------------------------------------------------------
-    # DuckDuckGo
-    # ------------------------------------------------------------------
-
-    def _ddg_search(self, query: str, max_results: int) -> list[Source]:
-        if not self._ddg:
+        if not raw:
+            log.warning("search returned 0 raw results for: %s", query[:60])
             return []
 
-        last_err: Optional[Exception] = None
-        for attempt in range(3):
-            try:
-                with self._ddg() as ddgs:
-                    hits = list(ddgs.text(query, max_results=max_results))
-                out: list[Source] = []
-                for h in hits:
-                    url = (h.get("href") or h.get("url") or "").strip()
-                    if not url:
-                        continue
-                    out.append(
-                        Source(
-                            title=(h.get("title") or "").strip(),
-                            url=url,
-                            snippet=(h.get("body") or "").strip(),
-                        )
-                    )
-                return out[:max_results]
-            except Exception as e:  # noqa: BLE001
-                last_err = e
-                log.debug("DDG attempt %d failed: %s", attempt + 1, e)
-                time.sleep(1.0 * (attempt + 1))
+        query_tokens = _query_tokens(query)
+        scored: list[tuple[float, Source]] = []
 
-        if last_err:
-            log.warning("DDG failed after 3 attempts: %s", last_err)
+        for r in raw:
+            title = r.get("title") or ""
+            url = r.get("href") or r.get("url") or ""
+            snippet = r.get("body") or r.get("snippet") or ""
+
+            if not url:
+                continue
+
+            # Skip common junk domains
+            if any(bad in url for bad in (
+                "fedex.com", "ups.com", "dhl.com",
+                "pinterest.", "quora.com",
+            )):
+                continue
+
+            score = _relevance(title, url, query_tokens)
+            scored.append((score, Source(title=title, url=url, snippet=snippet)))
+
+        # Sort by score, keep only results with at least 1 matching token
+        scored.sort(key=lambda x: x[0], reverse=True)
+        filtered = [src for s, src in scored if s > 0][:max_results]
+
+        if not filtered and scored:
+            # Nothing matched, but we have raw results — take the top ones anyway
+            log.warning(
+                "relevance filter dropped all results for %s; using top raw",
+                query[:60],
+            )
+            filtered = [src for _, src in scored[:max_results]]
+
+        log.debug("search: %d raw -> %d filtered for %s", len(raw), len(filtered), query[:60])
+        return filtered
+
+    # ------------------------------------------------------------------
+    # Backends
+    # ------------------------------------------------------------------
+
+    def _raw_search(self, query: str, n: int) -> list[dict]:
+        """Try ddgs first, then a plain HTTP fallback."""
+        results = self._ddgs_search(query, n)
+        if results:
+            return results
+
+        log.warning("ddgs returned nothing — trying fallback")
+        return self._fallback_search(query, n)
+
+    def _ddgs_search(self, query: str, n: int) -> list[dict]:
+        """Use the `ddgs` package. Retries once on 'No results found'."""
+        try:
+            from ddgs import DDGS
+        except ImportError:
+            try:
+                from duckduckgo_search import DDGS  # type: ignore
+            except ImportError:
+                log.error("neither ddgs nor duckduckgo_search is installed")
+                return []
+
+        # Try up to 2 times — first call often fails on rate limit
+        for attempt in range(2):
+            try:
+                with DDGS() as client:
+                    hits = list(client.text(query, max_results=n))
+                if hits:
+                    return hits
+                log.debug("ddgs returned empty (attempt %d) for: %s", attempt + 1, query[:50])
+            except Exception as e:  # noqa: BLE001
+                log.warning("ddgs attempt %d failed: %s", attempt + 1, e)
+
+            if attempt == 0:
+                time.sleep(2.0)  # wait before retrying
+
+        log.warning("ddgs gave up after 2 attempts: %s", query[:60])
         return []
+
+    def _fallback_search(self, query: str, n: int) -> list[dict]:
+        """HTML scrape fallback — no external deps beyond requests."""
+        try:
+            import requests
+            from bs4 import BeautifulSoup
+        except ImportError:
+            return []
+
+        url = "https://html.duckduckgo.com/html/"
+        try:
+            r = requests.post(
+                url,
+                data={"q": query},
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=15,
+            )
+            soup = BeautifulSoup(r.text, "html.parser")
+            out = []
+            for result in soup.select(".result")[:n]:
+                link = result.select_one(".result__a")
+                snippet = result.select_one(".result__snippet")
+                if not link:
+                    continue
+                out.append({
+                    "title": link.get_text(strip=True),
+                    "href": link.get("href", ""),
+                    "body": snippet.get_text(strip=True) if snippet else "",
+                })
+            return out
+        except Exception as e:  # noqa: BLE001
+            log.warning("fallback search failed: %s", e)
+            return []
 
 
 __all__ = ["SearchClient"]
