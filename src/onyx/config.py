@@ -108,6 +108,7 @@ class Config:
     max_chars_per_page: int
     log_level: str
     max_skills: int
+    extract_delay_seconds: int
 
     # ------------------------------------------------------------------
     # Factory
@@ -146,6 +147,7 @@ class Config:
             max_chars_per_page=_env_int("MAX_CHARS_PER_PAGE", 12000),
             log_level=_env_str("LOG_LEVEL", "INFO").upper(),
             max_skills=_env_int("MAX_SKILLS", 20),
+            extract_delay_seconds=_env_int("EXTRACT_DELAY_SECONDS", 20),
         )
 
     # ------------------------------------------------------------------

@@ -196,15 +196,21 @@ class SkillBootstrapper:
                 "total": self.vectors.count(skill_id),
             }
 
-        # 3. Crawl + extract
+        # 3. Crawl + extract (with pacing between LLM calls)
         raw_entries: list[KnowledgeEntry] = []
+        extract_delay = getattr(self.cfg, "extract_delay_seconds", 20)
+
         for i, src in enumerate(sources, 1):
             cb(f"[{i}/{len(sources)}] {_truncate(src.url, 90)}")
             text = self.crawler.fetch(src.url)
             if not text:
                 continue
+
             entries = self._extract(spec, text, src.url)
             raw_entries.extend(entries)
+
+            if i < len(sources) and extract_delay > 0:
+                time.sleep(extract_delay)
 
         if not raw_entries:
             cb("No knowledge extracted from sources")
@@ -311,8 +317,19 @@ class SkillBootstrapper:
             log.warning("extraction failed for %s: %s", url, e)
             return []
         except Exception as e:  # noqa: BLE001
-            log.warning("extraction crashed for %s: %s", url, e)
-            return []
+            err_str = str(e)
+            if "429" in err_str or "rate_limit" in err_str.lower():
+                wait = _extract_wait_seconds(err_str)
+                log.warning("rate limited on %s — waiting %ds", url[:70], wait)
+                time.sleep(wait)
+                try:
+                    data = self.llm.chat_json(_EXTRACT_SYSTEM, prompt)
+                except Exception as e2:  # noqa: BLE001
+                    log.warning("extraction retry failed for %s: %s", url[:70], e2)
+                    return []
+            else:
+                log.warning("extraction crashed for %s: %s", url, e)
+                return []
 
         if not isinstance(data, dict):
             return []
