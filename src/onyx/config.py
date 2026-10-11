@@ -1,27 +1,5 @@
 """
-Configuration loader for Onyx.
-
-Reads environment variables (via python-dotenv + os.environ), validates
-them, and exposes a single frozen `Config` object. All other modules
-import `CONFIG` from here — no module reads os.environ directly.
-
-Env vars (all optional except OPENAI_API_KEY):
-
-    OPENAI_API_KEY       LLM provider API key (default: "ollama")
-    OPENAI_BASE_URL      OpenAI-compatible endpoint
-    LLM_MODEL            Chat model name
-    EMBED_MODEL          Embedding model name
-    TAVILY_API_KEY       Optional; DuckDuckGo used if empty
-    DATA_DIR             Where runtime data lives (default: ./data)
-    SKILLS_DIR           Where skill DBs live (default: DATA_DIR/skills)
-    LOG_LEVEL            DEBUG|INFO|WARNING|ERROR (default: INFO)
-    MAX_SOURCES_PER_SKILL
-    MAX_PAGES_PER_SOURCE
-    REQUEST_TIMEOUT
-    LLM_MAX_ATTEMPTS
-    CODE_TIMEOUT
-    DEDUPE_DISTANCE
-    MAX_CHARS_PER_PAGE
+Configuration for Onyx — multi-provider LLM pool.
 """
 
 from __future__ import annotations
@@ -33,13 +11,8 @@ from typing import Optional
 
 from dotenv import load_dotenv
 
-# Load .env once at import time. Safe if file is missing.
 load_dotenv(override=False)
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def _env_str(key: str, default: str) -> str:
     val = os.getenv(key)
@@ -48,10 +21,7 @@ def _env_str(key: str, default: str) -> str:
 
 def _env_opt_str(key: str) -> Optional[str]:
     val = os.getenv(key)
-    if val is None:
-        return None
-    val = val.strip()
-    return val or None
+    return val.strip() if val and val.strip() else None
 
 
 def _env_int(key: str, default: int) -> int:
@@ -60,8 +30,8 @@ def _env_int(key: str, default: int) -> int:
         return default
     try:
         return int(raw)
-    except ValueError as e:
-        raise ValueError(f"env var {key} must be an integer, got {raw!r}") from e
+    except ValueError:
+        return default
 
 
 def _env_float(key: str, default: float) -> float:
@@ -70,68 +40,79 @@ def _env_float(key: str, default: float) -> float:
         return default
     try:
         return float(raw)
-    except ValueError as e:
-        raise ValueError(f"env var {key} must be a float, got {raw!r}") from e
+    except ValueError:
+        return default
 
 
 # ---------------------------------------------------------------------------
-# Config dataclass
+# Provider pool — priority order, failover on 429 / error
 # ---------------------------------------------------------------------------
+
+LLM_PROVIDERS = [
+    {
+        "name": "groq",
+        "base_url": "https://api.groq.com/openai/v1",
+        "model": "openai/gpt-oss-120b",
+        "api_key": _env_str("GROQ_API_KEY", ""),
+    },
+    {
+        "name": "cohere",
+        "base_url": "https://api.cohere.com/compatibility/v1",
+        "model": "command-r-plus-08-2024",
+        "api_key": _env_str("COHERE_API_KEY", ""),
+    },
+    {
+        "name": "mistral",
+        "base_url": "https://api.mistral.ai/v1",
+        "model": "mistral-small-latest",
+        "api_key": _env_str("MISTRAL_API_KEY", ""),
+    },
+    {
+        "name": "gemini",
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "model": "gemini-flash-latest",
+        "api_key": _env_str("GEMINI_API_KEY", ""),
+    },
+]
+
+# Drop providers with no key
+LLM_PROVIDERS = [p for p in LLM_PROVIDERS if p["api_key"] and p["api_key"].strip()]
+
 
 @dataclass(frozen=True)
 class Config:
-    """Immutable runtime configuration. Build once via `Config.from_env()`."""
-
-    # --- LLM ---
-    openai_api_key: str
-    openai_base_url: str
-    llm_model: str
-    embed_model: str
-
-    # --- Search ---
-    tavily_api_key: Optional[str]
-
-    # --- Paths ---
-    data_dir: Path
-    skills_dir: Path
-    chroma_dir: Path
-    registry_db: Path
-    logs_dir: Path
-
-    # --- Behaviour ---
-    max_sources_per_skill: int
-    max_pages_per_source: int
-    request_timeout: int
-    llm_max_attempts: int
-    code_timeout: int
-    dedupe_distance: float
-    max_chars_per_page: int
-    log_level: str
-    max_skills: int
-    extract_delay_seconds: int
-
-    # ------------------------------------------------------------------
-    # Factory
-    # ------------------------------------------------------------------
+    openai_api_key: str = "unused"
+    openai_base_url: str = "https://api.groq.com/openai/v1"
+    llm_model: str = "llama-3.3-70b-versatile"
+    embed_model: str = "text-embedding-3-small"
+    tavily_api_key: Optional[str] = None
+    data_dir: Path = Path("/content/onyx-data")
+    skills_dir: Path = Path("/content/onyx-data/skills")
+    chroma_dir: Path = Path("/content/onyx-data/chroma")
+    registry_db: Path = Path("/content/onyx-data/registry.sqlite3")
+    logs_dir: Path = Path("/content/onyx-data/logs")
+    max_sources_per_skill: int = 12
+    max_pages_per_source: int = 1
+    request_timeout: int = 20
+    llm_max_attempts: int = 4
+    code_timeout: int = 20
+    dedupe_distance: float = 0.12
+    max_chars_per_page: int = 12000
+    log_level: str = "INFO"
+    max_skills: int = 20
+    extract_delay_seconds: int = 4
 
     @classmethod
     def from_env(cls) -> "Config":
-        """Build a Config from environment variables."""
-        # Paths — resolve relative to CWD
-        data_dir = Path(_env_str("DATA_DIR", "./data")).expanduser().resolve()
+        data_dir = Path(_env_str("DATA_DIR", "/content/onyx-data")).expanduser().resolve()
         skills_dir = Path(_env_str("SKILLS_DIR", str(data_dir / "skills"))).expanduser().resolve()
         chroma_dir = data_dir / "chroma"
         logs_dir = data_dir / "logs"
         registry_db = data_dir / "registry.sqlite3"
-
         for p in (data_dir, skills_dir, chroma_dir, logs_dir):
             p.mkdir(parents=True, exist_ok=True)
 
         return cls(
-            openai_api_key=_env_str("GEMINI_API_KEY", _env_str("OPENAI_API_KEY", "")),
-            openai_base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-            llm_model="gemini-flash-latest",
-            embed_model=_env_str("EMBED_MODEL", "text-embedding-3-small"),
             tavily_api_key=_env_opt_str("TAVILY_API_KEY"),
             data_dir=data_dir,
             skills_dir=skills_dir,
@@ -150,25 +131,11 @@ class Config:
             extract_delay_seconds=_env_int("EXTRACT_DELAY_SECONDS", 4),
         )
 
-    # ------------------------------------------------------------------
-    # Convenience
-    # ------------------------------------------------------------------
-
     def summary(self) -> str:
-        """Human-readable one-line summary (never leaks the API key)."""
-        key = "set" if self.openai_api_key and self.openai_api_key != "ollama" else "ollama"
-        tavily = "set" if self.tavily_api_key else "off (DuckDuckGo)"
-        return (
-            f"model={self.llm_model} embed={self.embed_model} "
-            f"key={key} tavily={tavily} data={self.data_dir}"
-        )
+        providers = ", ".join(p["name"] for p in LLM_PROVIDERS)
+        return f"providers=[{providers}] data={self.data_dir}"
 
-
-# ---------------------------------------------------------------------------
-# Singleton
-# ---------------------------------------------------------------------------
 
 CONFIG: Config = Config.from_env()
 
-
-__all__ = ["Config", "CONFIG"]
+__all__ = ["Config", "CONFIG", "LLM_PROVIDERS"]

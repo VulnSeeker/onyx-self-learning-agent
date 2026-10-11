@@ -1,14 +1,10 @@
 """
-LLM client for Onyx.
+Multi-provider LLM client for Onyx.
 
-Thin wrapper around any OpenAI-compatible endpoint (OpenAI, Groq, Together,
-Ollama, OpenRouter, vLLM, etc.). Adds:
-  - retries with exponential backoff on transient errors
-  - JSON extraction from messy responses
-  - batch embeddings with a single round trip
-  - thread-safe access
-
-Nothing else in Onyx talks to the LLM directly.
+- Tries providers in priority order
+- On 429 / connection error, tries the next provider
+- Bumps default max_tokens so reasoning models (gpt-oss-120b) have
+  room for both reasoning and output
 """
 
 from __future__ import annotations
@@ -19,184 +15,153 @@ import re
 import threading
 from typing import Any, Iterable
 
-from openai import APIConnectionError, APIError, OpenAI, RateLimitError
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
+from openai import OpenAI, APIConnectionError, APIError, RateLimitError
 
-from onyx.config import CONFIG, Config
+from onyx.config import CONFIG, Config, LLM_PROVIDERS
 
 log = logging.getLogger("onyx.llm")
 
-
-# ---------------------------------------------------------------------------
-# JSON parsing helpers
-# ---------------------------------------------------------------------------
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
 
 
 class LLMResponseError(RuntimeError):
-    """Raised when the LLM returns something we cannot parse or use."""
+    pass
 
 
 def parse_json_loose(raw: str) -> Any:
-    """
-    Extract a JSON value from a possibly-messy LLM response.
-
-    Handles:
-      - pure JSON
-      - ```json fenced blocks
-      - prose before/after a JSON object or array
-    """
     if not raw or not raw.strip():
         raise LLMResponseError("empty LLM response")
-
     raw = raw.strip()
-
-    # 1. Direct parse
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
         pass
-
-    # 2. Fenced block
     m = _JSON_FENCE_RE.search(raw)
     if m:
         try:
             return json.loads(m.group(1).strip())
         except json.JSONDecodeError:
             pass
-
-    # 3. First { ... } or [ ... ]
     for open_c, close_c in (("{", "}"), ("[", "]")):
         start = raw.find(open_c)
         end = raw.rfind(close_c)
         if start != -1 and end > start:
             try:
-                return json.loads(raw[start : end + 1])
+                return json.loads(raw[start:end + 1])
             except json.JSONDecodeError:
                 continue
-
-    snippet = raw[:200].replace("\n", " ")
-    raise LLMResponseError(f"could not parse JSON from LLM output: {snippet!r}")
+    raise LLMResponseError(f"could not parse JSON: {raw[:200]!r}")
 
 
-# ---------------------------------------------------------------------------
-# Client
-# ---------------------------------------------------------------------------
+# Default output budget. Reasoning models need headroom for hidden tokens.
+DEFAULT_MAX_TOKENS = 1500
+
 
 class LLMClient:
-    """Thread-safe OpenAI-compatible LLM client."""
-
     def __init__(self, cfg: Config = CONFIG) -> None:
         self.cfg = cfg
-        self._client = OpenAI(
-            api_key=cfg.openai_api_key,
-            base_url=cfg.openai_base_url,
-            timeout=cfg.request_timeout * 3,  # LLM calls can be slow
-            max_retries=0,                     # we handle retries ourselves
-        )
         self._lock = threading.Lock()
-        log.debug("LLMClient initialised: %s", cfg.summary())
 
-    # ------------------------------------------------------------------
-    # Retry policy: only retry on transient errors, never on 4xx.
-    # ------------------------------------------------------------------
+        self._clients = []
+        for p in LLM_PROVIDERS:
+            try:
+                client = OpenAI(
+                    api_key=p["api_key"] or "unused",
+                    base_url=p["base_url"],
+                    timeout=cfg.request_timeout * 3,
+                    max_retries=0,
+                )
+                self._clients.append({
+                    "name": p["name"],
+                    "model": p["model"],
+                    "client": client,
+                })
+                log.info("provider ready: %s (%s)", p["name"], p["model"])
+            except Exception as e:
+                log.warning("provider %s init failed: %s", p["name"], e)
 
-    def _retry(self):
-        return retry(
-            stop=stop_after_attempt(self.cfg.llm_max_attempts),
-            wait=wait_exponential(multiplier=1, min=1, max=20),
-            retry=retry_if_exception_type(
-                (APIConnectionError, RateLimitError)
-            ),
-            reraise=True,
-        )
+        if not self._clients:
+            raise RuntimeError("No LLM providers initialized")
 
-    # ------------------------------------------------------------------
-    # Chat
-    # ------------------------------------------------------------------
+        self._current = 0
 
-    def chat(
-        self,
-        system: str,
-        user: str,
-        *,
-        temperature: float = 0.2,
-        max_tokens: int | None = None,
-    ) -> str:
-        """Single-turn chat completion. Returns the assistant message string."""
+    def _call_one(self, provider, system, user, temperature, max_tokens):
+        with self._lock:
+            resp = provider["client"].chat.completions.create(
+                model=provider["model"],
+                temperature=temperature,
+                max_tokens=max_tokens,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+            )
+        if not resp.choices:
+            raise LLMResponseError("no choices")
+        return (resp.choices[0].message.content or "").strip()
+
+    def chat(self, system, user, *, temperature=0.2, max_tokens=None):
         system = (
-            "IMPORTANT: Never call tools, functions, or built-in APIs. "
-            "Never return tool_use blocks. Respond with plain text or JSON only.\n\n"
+            "Never call tools or functions. Respond with plain text or JSON only.\n\n"
             + system
         )
+        max_tokens = max_tokens or DEFAULT_MAX_TOKENS
 
-        @self._retry()
-        def _call() -> str:
-            with self._lock:
-                resp = self._client.chat.completions.create(
-                    model=self.cfg.llm_model,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    messages=[
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user},
-                    ],
-                )
-            if not resp.choices:
-                raise LLMResponseError("LLM returned no choices")
-            return (resp.choices[0].message.content or "").strip()
+        errors = []
+        n = len(self._clients)
 
-        try:
-            return _call()
-        except APIError as e:
-            log.error("LLM chat failed: %s", e)
-            raise
+        for attempt in range(n):
+            idx = (self._current + attempt) % n
+            provider = self._clients[idx]
+            try:
+                text = self._call_one(provider, system, user, temperature, max_tokens)
+                if not text:
+                    # Empty output — treat as failure, try next provider
+                    log.warning("[%s] returned empty content", provider["name"])
+                    errors.append(f"{provider['name']}: empty")
+                    continue
+                self._current = (idx + 1) % n
+                return text
+            except RateLimitError as e:
+                log.warning("[%s] rate-limited: %s", provider["name"], str(e)[:80])
+                errors.append(f"{provider['name']}: 429")
+                continue
+            except APIError as e:
+                log.warning("[%s] API error: %s", provider["name"], str(e)[:80])
+                errors.append(f"{provider['name']}: {str(e)[:60]}")
+                continue
+            except Exception as e:
+                log.warning("[%s] failed: %s", provider["name"], str(e)[:80])
+                errors.append(f"{provider['name']}: {type(e).__name__}")
+                continue
 
-    def chat_json(
-        self,
-        system: str,
-        user: str,
-        *,
-        temperature: float = 0.1,
-        max_tokens: int | None = None,
-    ) -> Any:
-        """Like chat() but forces JSON-only responses and parses them."""
+        raise LLMResponseError(f"all {n} providers failed: {'; '.join(errors)}")
+
+    def chat_json(self, system, user, *, temperature=0.1, max_tokens=None):
         system_json = (
             system.rstrip()
-            + "\n\nYou MUST respond with valid JSON only. "
-            "No prose, no markdown fences, no commentary."
+            + "\n\nYou MUST respond with valid JSON only. No prose, no fences."
         )
         raw = self.chat(system_json, user, temperature=temperature, max_tokens=max_tokens)
         return parse_json_loose(raw)
 
-    # ------------------------------------------------------------------
-    # Embeddings
-    # ------------------------------------------------------------------
-
-    def embed(self, texts: Iterable[str] | str) -> list[list[float]]:
-        """Embed using local ChromaDB default function (no API call)."""
+    def embed(self, texts):
         from chromadb.utils import embedding_functions
         ef = embedding_functions.DefaultEmbeddingFunction()
         batch = [texts] if isinstance(texts, str) else list(texts)
         if not batch:
             return []
-        result = []
-        for vec in ef(batch):
-            result.append([float(x) for x in vec])
-        return result
+        return [[float(x) for x in vec] for vec in ef(batch)]
 
-    def embed_one(self, text: str) -> list[float]:
-        """Embed a single string. Returns one vector."""
+    def embed_one(self, text):
         vecs = self.embed([text])
         if not vecs:
             raise LLMResponseError("embedding returned no vectors")
         return vecs[0]
+
+    def provider_info(self):
+        return [{"name": c["name"], "model": c["model"]} for c in self._clients]
 
 
 __all__ = ["LLMClient", "LLMResponseError", "parse_json_loose"]
