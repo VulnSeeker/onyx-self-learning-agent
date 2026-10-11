@@ -129,7 +129,7 @@ class Config:
         return cls(
             openai_api_key=_env_str("OPENAI_API_KEY", "ollama"),
             openai_base_url=_env_str("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/"),
-            llm_model=_env_str("LLM_MODEL", "gpt-4o-mini"),
+            llm_model=_env_str("LLM_MODEL", "openai/gpt-oss-120b"),
             embed_model=_env_str("EMBED_MODEL", "text-embedding-3-small"),
             tavily_api_key=_env_opt_str("TAVILY_API_KEY"),
             data_dir=data_dir,
