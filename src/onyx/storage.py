@@ -50,7 +50,9 @@ CREATE TABLE IF NOT EXISTS skills (
     spec_json     TEXT NOT NULL DEFAULT '{}',
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL,
-    entry_count   INTEGER NOT NULL DEFAULT 0
+    entry_count   INTEGER NOT NULL DEFAULT 0,
+    usage_count   INTEGER NOT NULL DEFAULT 0,
+    last_used     TEXT
 );
 
 CREATE TABLE IF NOT EXISTS knowledge_meta (
@@ -104,7 +106,21 @@ class Registry:
     def _init_schema(self) -> None:
         with self._connect() as conn:
             conn.executescript(_REGISTRY_SCHEMA)
+        self._migrate_schema()
         log.debug("Registry ready at %s", self.db_path)
+
+    def _migrate_schema(self) -> None:
+        """Add usage columns to existing DBs created before this feature."""
+        with self._connect() as conn:
+            cols = {row["name"] for row in conn.execute("PRAGMA table_info(skills)")}
+            if "usage_count" not in cols:
+                conn.execute(
+                    "ALTER TABLE skills ADD COLUMN usage_count INTEGER NOT NULL DEFAULT 0"
+                )
+                log.info("Migration: added skills.usage_count")
+            if "last_used" not in cols:
+                conn.execute("ALTER TABLE skills ADD COLUMN last_used TEXT")
+                log.info("Migration: added skills.last_used")
 
     # ------------------------------------------------------------------
     # Skills
@@ -145,15 +161,17 @@ class Registry:
                 """
                 INSERT INTO skills
                     (skill_id, name, description, tools_json, spec_json,
-                     created_at, updated_at, entry_count)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                     created_at, updated_at, entry_count, usage_count, last_used)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(skill_id) DO UPDATE SET
                     name         = excluded.name,
                     description  = excluded.description,
                     tools_json   = excluded.tools_json,
                     spec_json    = excluded.spec_json,
                     updated_at   = excluded.updated_at,
-                    entry_count  = excluded.entry_count
+                    entry_count  = excluded.entry_count,
+                    usage_count  = excluded.usage_count,
+                    last_used    = excluded.last_used
                 """,
                 (
                     rec.skill_id,
@@ -164,6 +182,8 @@ class Registry:
                     rec.created_at,
                     rec.updated_at,
                     rec.entry_count,
+                    rec.usage_count,
+                    rec.last_used,
                 ),
             )
 
@@ -259,11 +279,50 @@ class Registry:
         return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
+    # Usage tracking + capacity
+    # ------------------------------------------------------------------
+
+    def count(self) -> int:
+        """Total number of skills in the registry."""
+        with self._connect() as conn:
+            row = conn.execute("SELECT COUNT(*) AS c FROM skills").fetchone()
+        return int(row["c"]) if row else 0
+
+    def record_use(self, skill_id: str) -> None:
+        """Increment usage_count and refresh last_used for a skill."""
+        if not skill_id:
+            return
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE skills
+                SET usage_count = usage_count + 1,
+                    last_used   = ?
+                WHERE skill_id = ?
+                """,
+                (_utcnow_iso(), skill_id),
+            )
+
+    def list_with_stats(self) -> list[dict[str, Any]]:
+        """Return skills with usage stats, sorted by usage_count descending."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT skill_id, name, description, entry_count,
+                       usage_count, last_used, created_at, updated_at
+                FROM skills
+                ORDER BY usage_count DESC, updated_at DESC
+                """
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
     @staticmethod
     def _row_to_record(row: sqlite3.Row) -> SkillRecord:
+        keys = row.keys()
         return SkillRecord(
             skill_id=row["skill_id"],
             name=row["name"],
@@ -273,6 +332,8 @@ class Registry:
             updated_at=row["updated_at"],
             entry_count=int(row["entry_count"] or 0),
             spec=_safe_json_dict(row["spec_json"]),
+            usage_count=int(row["usage_count"] or 0) if "usage_count" in keys else 0,
+            last_used=row["last_used"] if "last_used" in keys else None,
         )
 
 
