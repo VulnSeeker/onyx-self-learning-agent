@@ -1,38 +1,14 @@
 # ============================================================================
 # .github/workflows/docker.yml — Build + smoke test Docker image
 # ============================================================================
-# Runs on:
-#   - push to main
-#   - PRs to main
-#   - manual trigger (workflow_dispatch)
-#
-# What it does:
-#   1. Lint the Dockerfile with hadolint
-#   2. Build the Docker image
-#   3. Run a smoke test (start container, hit /health)
-#   4. Print image size and metadata
-#
-# Everything runs on GitHub's cloud. Zero local risk.
+# Triggered manually only (workflow_dispatch).
+# Auto-trigger on push is disabled while the codebase is under active
+# development. To run: Actions → Docker → Run workflow.
 # ============================================================================
 
 name: Docker
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "Dockerfile"
-      - ".dockerignore"
-      - "docker-compose*.yml"
-      - "src/**"
-      - "pyproject.toml"
-      - ".github/workflows/docker.yml"
-  pull_request:
-    branches: [main]
-    paths:
-      - "Dockerfile"
-      - "src/**"
-      - "pyproject.toml"
   workflow_dispatch:
 
 permissions:
@@ -40,28 +16,18 @@ permissions:
   packages: write
 
 jobs:
-  # ==========================================================================
-  # Job 1: Lint the Dockerfile (no build, just static analysis)
-  # ==========================================================================
   lint:
     name: Lint Dockerfile
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Run hadolint
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: Dockerfile
           failure-threshold: warning
           ignore: DL3008,DL3013,DL3059
-          # DL3008 — pin apt versions (we don't need to)
-          # DL3013 — pin pip versions (we use ranges)
-          # DL3059 — multiple consecutive RUN (cosmetic)
 
-  # ==========================================================================
-  # Job 2: Build the image + smoke test
-  # ==========================================================================
   build:
     name: Build + Smoke Test
     runs-on: ubuntu-latest
@@ -84,11 +50,9 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Show image size
-        run: |
-          echo "=== Image size ==="
-          docker images onyx:test --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}"
+        run: docker images onyx:test --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}"
 
-      - name: Start container (background)
+      - name: Start container
         run: |
           docker run -d \
             --name onyx-test \
@@ -101,64 +65,36 @@ jobs:
             -e LOG_LEVEL=WARNING \
             onyx:test
 
-      - name: Wait for API to be ready
+      - name: Wait for API
         run: |
-          echo "=== Waiting for API to be ready ==="
           for i in {1..30}; do
             if curl -fsS http://localhost:8000/health > /dev/null 2>&1; then
               echo "API is up after ${i} attempts"
               break
             fi
-            echo "Attempt $i/30..."
             sleep 2
           done
 
-      - name: Smoke test — hit /health
+      - name: Smoke test — /health
         run: |
-          echo "=== GET /health ==="
           curl -fsS http://localhost:8000/health | tee /tmp/health.json
-          echo ""
-          if grep -q '"status":"ok"' /tmp/health.json; then
-            echo "✅ Health check passed"
-          else
-            echo "❌ Health check failed"
-            exit 1
-          fi
+          grep -q '"status":"ok"' /tmp/health.json || (echo "❌"; exit 1)
+          echo "✅ Health check passed"
 
-      - name: Smoke test — hit /skills
+      - name: Smoke test — /skills
         run: |
-          echo "=== GET /skills ==="
           curl -fsS http://localhost:8000/skills
           echo ""
-          echo "✅ /skills endpoint responded"
 
-      - name: Smoke test — hit /version
-        run: |
-          echo "=== GET /version ==="
-          curl -fsS http://localhost:8000/version
+      - name: Smoke test — /version
+        run: curl -fsS http://localhost:8000/version
 
-      - name: Show container logs on failure
+      - name: Container logs on failure
         if: failure()
-        run: |
-          echo "=== Container logs ==="
-          docker logs onyx-test
+        run: docker logs onyx-test
 
       - name: Tear down
         if: always()
         run: |
           docker stop onyx-test || true
           docker rm onyx-test || true
-
-      - name: Summary
-        if: success()
-        run: |
-          echo "## ✅ Docker Build Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Check | Result |" >> $GITHUB_STEP_SUMMARY
-          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Dockerfile lint | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
-          echo "| Image build | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
-          echo "| Container start | ✅ Passed |" >> $GITHUB_STEP_SUMMARY
-          echo "| /health | ✅ 200 |" >> $GITHUB_STEP_SUMMARY
-          echo "| /skills | ✅ 200 |" >> $GITHUB_STEP_SUMMARY
-          echo "| /version | ✅ 200 |" >> $GITHUB_STEP_SUMMARY
