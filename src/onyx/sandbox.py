@@ -27,7 +27,7 @@ from onyx.config import CONFIG, Config
 log = logging.getLogger("onyx.sandbox")
 
 # Memory cap for the child (bytes). 512 MiB by default.
-_MEM_LIMIT_BYTES = 512 * 1024 * 1024
+_MEM_LIMIT_BYTES = 4 * 1024 * 1024 * 1024  # 4 GB
 
 
 class Sandbox:
@@ -67,11 +67,15 @@ class Sandbox:
                 "HOME": tmp,
                 "TMPDIR": tmp,
                 "LANG": "C.UTF-8",
+                "OMP_NUM_THREADS": "1",
+                "OPENBLAS_NUM_THREADS": "1",
+                "MKL_NUM_THREADS": "1",
+                "NUMEXPR_NUM_THREADS": "1",
             }
 
             # -I: isolated mode (ignore PYTHON* env, no user site)
             # -S: skip site.py
-            cmd = [sys.executable, "-I", "-S", str(script)]
+            cmd = [sys.executable, "-I", str(script)]
 
             try:
                 proc = subprocess.Popen(

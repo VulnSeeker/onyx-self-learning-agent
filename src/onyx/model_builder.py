@@ -105,7 +105,7 @@ class ModelBuilder:
         self,
         plan: TrainingPlan,
         progress: ProgressCB = None,
-        timeout: int = 600,
+        timeout: int = 120,
     ) -> dict[str, Any]:
         """Run the training code in the sandbox and parse the metric."""
         cb = progress or (lambda _msg: None)
