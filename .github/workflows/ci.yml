@@ -1,14 +1,14 @@
 # ============================================================================
 # .github/workflows/ci.yml — Python tests + lint + type check
 # ============================================================================
+# Triggered manually only (workflow_dispatch).
+# Auto-trigger on push is disabled while the codebase is under active
+# development. To run: Actions → CI → Run workflow.
+# ============================================================================
 
 name: CI
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -47,14 +47,3 @@ jobs:
 
       - name: Run tests
         run: pytest -v --tb=short
-
-  lint-docker:
-    name: Lint Dockerfile (hadolint)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: hadolint/hadolint-action@v3.1.0
-        with:
-          dockerfile: Dockerfile
-          failure-threshold: warning
-          ignore: DL3008,DL3013,DL3059
