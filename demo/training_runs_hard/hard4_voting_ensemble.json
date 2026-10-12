@@ -1,0 +1,18 @@
+{
+  "task_id": "hard4",
+  "name": "voting_ensemble",
+  "expected_library": "sklearn",
+  "prompt": "Train a VotingClassifier (soft voting) combining Logistic Regression, Random Forest, and SVM on scikit-learn's breast_cancer dataset. Use 70/30 split. Print: METRIC accuracy=<value>",
+  "timestamp": "2026-10-12T14:11:22.765436",
+  "library": "sklearn",
+  "library_matched": true,
+  "dataset": "Breast Cancer Wisconsin (Diagnostic)",
+  "approach": "VotingClassifier with LogisticRegression, RandomForestClassifier, and SVM",
+  "train_code_len": 991,
+  "metric_raw": "METRIC accuracy=0.9707602339181286",
+  "metric_value": 0.9707602339181286,
+  "success": true,
+  "elapsed_seconds": 14.61,
+  "stdout_tail": "METRIC accuracy=0.9707602339181286\n\n[stderr]\n/usr/local/lib/python3.13/dist-packages/sklearn/linear_model/_logistic.py:465: ConvergenceWarning: lbfgs failed to converge (status=1):\nSTOP: TOTAL NO. OF ITERATIONS REACHED LIMIT.\n\nIncrease the number of iterations (max_iter) or scale the data as shown in:\n    https://scikit-learn.org/stable/modules/preprocessing.html\nPlease also refer to the documentation for alternative solver options:\n    https://scikit-learn.org/stable/modules/linear_model.html#logistic-regression\n  n_iter_i = _check_optimize_result(",
+  "error": ""
+}

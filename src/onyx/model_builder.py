@@ -54,6 +54,9 @@ Hard rules for train_code:
         METRIC <name>=<value>
     for example:  METRIC accuracy=0.87
   - Keep it under 80 lines.
+  - For PyTorch: always normalize input data (e.g. StandardScaler) and use lr<=0.001.
+  - For HuggingFace datasets: use namespace/name format (e.g. 'stanfordnlp/imdb', not 'imdb').
+  - Always print the METRIC line with a real number, not NaN.
   - No plots, no interactive input, no network calls beyond dataset loading.
   - No markdown fences in train_code; just plain source.
 """
@@ -87,7 +90,7 @@ class ModelBuilder:
             raise ValueError("task is required")
 
         try:
-            data = self.llm.chat_json(_PLAN_SYSTEM, f"Task: {task}")
+            data = self.llm.chat_json(_PLAN_SYSTEM, f"Task: {task}", max_tokens=4000)
         except LLMResponseError as e:
             raise ModelBuilderError(f"planning failed: {e}") from e
 

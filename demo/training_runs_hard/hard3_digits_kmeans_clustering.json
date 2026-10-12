@@ -1,0 +1,18 @@
+{
+  "task_id": "hard3",
+  "name": "digits_kmeans_clustering",
+  "expected_library": "sklearn",
+  "prompt": "Cluster scikit-learn's digits dataset into 10 clusters using KMeans. Print the silhouette score as: METRIC silhouette=<value>",
+  "timestamp": "2026-10-12T14:11:16.163546",
+  "library": "sklearn",
+  "library_matched": true,
+  "dataset": "Digits",
+  "approach": "KMeans clustering with 10 clusters and silhouette score evaluation",
+  "train_code_len": 345,
+  "metric_raw": "METRIC silhouette=0.1765",
+  "metric_value": 0.1765,
+  "success": true,
+  "elapsed_seconds": 3.6,
+  "stdout_tail": "METRIC silhouette=0.1765",
+  "error": ""
+}

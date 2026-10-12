@@ -1,0 +1,18 @@
+{
+  "task_id": "hard6r",
+  "name": "regression_mlp_pytorch_retry",
+  "expected_library": "pytorch",
+  "prompt": "Train a 3-layer MLP using PyTorch (CPU) on scikit-learn's fetch_california_housing dataset for regression. Normalize features with StandardScaler. Use 80/20 split, 20 epochs, MSE loss, learning rate 0.001. Print: METRIC rmse=<value>",
+  "timestamp": "2026-10-12T15:26:00.614350",
+  "library": "pytorch",
+  "library_matched": true,
+  "dataset": "California Housing",
+  "approach": "3-layer MLP with PyTorch for regression",
+  "train_code_len": 1494,
+  "metric_raw": "METRIC rmse=2.2089",
+  "metric_value": 2.2089,
+  "success": true,
+  "elapsed_seconds": 20.73,
+  "stdout_tail": "METRIC rmse=2.2089",
+  "error": ""
+}

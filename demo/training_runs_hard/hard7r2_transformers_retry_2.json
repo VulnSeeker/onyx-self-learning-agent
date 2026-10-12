@@ -1,0 +1,16 @@
+{
+  "task_id": "hard7r2",
+  "name": "transformers_retry_2",
+  "prompt": "Fine-tune distilbert-base-uncased for 1 epoch on a small text dataset using HuggingFace Transformers. Use `load_dataset('stanfordnlp/imdb', split='train[:500]')`. If load_dataset fails for any reason, FALL BACK to sklearn's 20newsgroups + TfidfVectorizer + LogisticRegression. Print: METRIC accuracy=<value>",
+  "timestamp": "2026-10-12T15:27:34.057052",
+  "library": "transformers",
+  "dataset": "IMDB (first 500 training samples)",
+  "approach": "Fine-tune DistilBERT for 1 epoch, fallback to TF-IDF + Logistic Regression if dataset load fails",
+  "train_code_len": 2639,
+  "metric_raw": "METRIC accuracy=0.9118",
+  "metric_value": 0.9118,
+  "success": true,
+  "elapsed_seconds": 24.61,
+  "stdout_tail": "METRIC accuracy=0.9118\n\n[stderr]\nWarning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.",
+  "error": ""
+}

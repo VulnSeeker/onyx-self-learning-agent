@@ -1,0 +1,18 @@
+{
+  "task_id": "hard7",
+  "name": "distilbert_sentiment",
+  "expected_library": "transformers",
+  "prompt": "Fine-tune distilbert-base-uncased for 1 epoch on a small subset (500 samples) of the IMDB dataset using HuggingFace Transformers. If transformers or the dataset is unavailable, fall back to TF-IDF + Logistic Regression on the 20newsgroups dataset. Print: METRIC accuracy=<value>",
+  "timestamp": "2026-10-12T14:12:36.483845",
+  "library": "transformers",
+  "library_matched": true,
+  "dataset": "IMDB (fallback: 20 Newsgroups)",
+  "approach": "Fine-tune DistilBERT on 500 IMDB samples; if unavailable, use TF-IDF + Logistic Regression on 20 Newsgroups",
+  "train_code_len": 1828,
+  "metric_raw": null,
+  "metric_value": null,
+  "success": false,
+  "elapsed_seconds": 21.53,
+  "stdout_tail": "th\n    ).resolve_path(url_or_filename)\n      ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.13/dist-packages/huggingface_hub/hf_file_system.py\", line 307, in resolve_path\n    parsed = parse_hf_uri(f\"{constants.HF_PROTOCOL}{path}\")\n  File \"/usr/local/lib/python3.13/dist-packages/huggingface_hub/utils/_hf_uris.py\", line 319, in parse_hf_uri\n    return _parse_repo_body(location, type_, raw=raw)\n  File \"/usr/local/lib/python3.13/dist-packages/huggingface_hub/utils/_hf_uris.py\", line 617, in _parse_repo_body\n    raise HfUriError(uri=raw, msg=f\"Repository id must be 'namespace/name', got '{repo_id}'.\")\nhuggingface_hub.errors.HfUriError: Invalid HF URI 'hf://datasets/imdb@e6281661ce1c48d982bc483cf8a173c1bbeb5d31/.huggingface.yaml'. Repository id must be 'namespace/name', got 'imdb'.",
+  "error": ""
+}

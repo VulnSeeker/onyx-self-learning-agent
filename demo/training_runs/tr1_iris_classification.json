@@ -1,0 +1,16 @@
+{
+  "task_id": "tr1",
+  "name": "iris_classification",
+  "prompt": "Train a logistic regression classifier on scikit-learn's built-in iris dataset using a 70/30 train-test split. Print the accuracy on the test set as: METRIC accuracy=<value>",
+  "timestamp": "2026-10-12T14:07:36.705352",
+  "library": "sklearn",
+  "dataset": "Iris",
+  "approach": "Logistic regression with 70/30 train-test split",
+  "train_code_len": 661,
+  "metric_raw": "METRIC accuracy=0.9333",
+  "metric_value": 0.9333,
+  "success": true,
+  "elapsed_seconds": 4.53,
+  "stdout_tail": "METRIC accuracy=0.9333\n\n[stderr]\n/usr/local/lib/python3.13/dist-packages/sklearn/linear_model/_logistic.py:1247: FutureWarning: 'multi_class' was deprecated in version 1.5 and will be removed in 1.7. From then on, it will always use 'multinomial'. Leave it to its default value to avoid this warning.\n  warnings.warn(",
+  "error": ""
+}

@@ -1,0 +1,18 @@
+{
+  "task_id": "hard5",
+  "name": "mnist_cnn_pytorch",
+  "expected_library": "pytorch",
+  "prompt": "Train a simple 2-layer CNN on scikit-learn's digits dataset using PyTorch on CPU. Use 80/20 split, 3 epochs, batch size 64. Print: METRIC accuracy=<value>",
+  "timestamp": "2026-10-12T14:11:40.380109",
+  "library": "",
+  "library_matched": false,
+  "dataset": "",
+  "approach": "",
+  "train_code_len": 0,
+  "metric_raw": null,
+  "metric_value": null,
+  "success": false,
+  "elapsed_seconds": 3.52,
+  "stdout_tail": "",
+  "error": "AgentError: model build failed: planning failed: could not parse JSON: '{\\n  \"dataset_name\": \"Digits (scikit-learn)\",\\n  \"dataset_url\": \"https://scikit-learn.org/stable/datasets/toy_dataset.html#digits-dataset\",\\n  \"approach\": \"Train a 2\u2011layer CNN on the digits images using '"
+}

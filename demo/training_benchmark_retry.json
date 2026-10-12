@@ -1,0 +1,58 @@
+{
+  "runs": [
+    {
+      "task_id": "hard5r",
+      "name": "mnist_cnn_pytorch_retry",
+      "expected_library": "pytorch",
+      "prompt": "Train a simple 2-layer CNN on scikit-learn's digits dataset using PyTorch on CPU. Normalize the input with StandardScaler or /16.0. Use 80/20 split, 3 epochs, batch size 64, learning rate 0.001. Print: METRIC accuracy=<value>",
+      "timestamp": "2026-10-12T15:25:46.374750",
+      "library": "pytorch",
+      "library_matched": true,
+      "dataset": "Digits (scikit-learn)",
+      "approach": "2-layer CNN on 8x8 digit images with normalization",
+      "train_code_len": 1884,
+      "metric_raw": "METRIC accuracy=0.7917",
+      "metric_value": 0.7917,
+      "success": true,
+      "elapsed_seconds": 11.24,
+      "stdout_tail": "METRIC accuracy=0.7917",
+      "error": ""
+    },
+    {
+      "task_id": "hard6r",
+      "name": "regression_mlp_pytorch_retry",
+      "expected_library": "pytorch",
+      "prompt": "Train a 3-layer MLP using PyTorch (CPU) on scikit-learn's fetch_california_housing dataset for regression. Normalize features with StandardScaler. Use 80/20 split, 20 epochs, MSE loss, learning rate 0.001. Print: METRIC rmse=<value>",
+      "timestamp": "2026-10-12T15:26:00.614350",
+      "library": "pytorch",
+      "library_matched": true,
+      "dataset": "California Housing",
+      "approach": "3-layer MLP with PyTorch for regression",
+      "train_code_len": 1494,
+      "metric_raw": "METRIC rmse=2.2089",
+      "metric_value": 2.2089,
+      "success": true,
+      "elapsed_seconds": 20.73,
+      "stdout_tail": "METRIC rmse=2.2089",
+      "error": ""
+    },
+    {
+      "task_id": "hard7r",
+      "name": "transformers_retry",
+      "expected_library": "transformers",
+      "prompt": "Fine-tune distilbert-base-uncased for 1 epoch on 500 samples from the 'stanfordnlp/imdb' dataset using HuggingFace Transformers. If transformers is unavailable, fall back to TF-IDF + Logistic Regression on sklearn's 20newsgroups dataset. Print: METRIC accuracy=<value>",
+      "timestamp": "2026-10-12T15:26:24.350313",
+      "library": "transformers",
+      "library_matched": true,
+      "dataset": "IMDB Movie Reviews",
+      "approach": "Fine-tune DistilBert on 500 training samples",
+      "train_code_len": 2059,
+      "metric_raw": null,
+      "metric_value": null,
+      "success": false,
+      "elapsed_seconds": 15.32,
+      "stdout_tail": "[stderr]\nTraceback (most recent call last):\n  File \"/tmp/onyx_sbx_7ydrnf5a/snippet.py\", line 3, in <module>\n    from transformers import DistilBertTokenizerFast, DistilBertForSequenceClassification, AdamW\nImportError: cannot import name 'AdamW' from 'transformers' (/usr/local/lib/python3.13/dist-packages/transformers/__init__.py)",
+      "error": ""
+    }
+  ]
+}

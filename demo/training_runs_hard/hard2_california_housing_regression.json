@@ -1,0 +1,18 @@
+{
+  "task_id": "hard2",
+  "name": "california_housing_regression",
+  "expected_library": "sklearn",
+  "prompt": "Train a Gradient Boosting Regressor on scikit-learn's fetch_california_housing dataset. Use 80/20 split. Print: METRIC rmse=<value>",
+  "timestamp": "2026-10-12T14:10:43.775374",
+  "library": "sklearn",
+  "library_matched": true,
+  "dataset": "California Housing",
+  "approach": "Gradient Boosting Regressor",
+  "train_code_len": 634,
+  "metric_raw": "METRIC rmse=0.54",
+  "metric_value": 0.54,
+  "success": true,
+  "elapsed_seconds": 29.39,
+  "stdout_tail": "METRIC rmse=0.54",
+  "error": ""
+}

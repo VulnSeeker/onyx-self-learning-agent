@@ -1,0 +1,16 @@
+{
+  "task_id": "tr2",
+  "name": "digits_classification",
+  "prompt": "Train a decision tree classifier on scikit-learn's built-in digits dataset using an 80/20 train-test split. Print the accuracy on the test set as: METRIC accuracy=<value>",
+  "timestamp": "2026-10-12T14:07:44.236275",
+  "library": "sklearn",
+  "dataset": "sklearn digits",
+  "approach": "Decision tree classification",
+  "train_code_len": 354,
+  "metric_raw": "METRIC accuracy=0.8583333333333333",
+  "metric_value": 0.8583333333333333,
+  "success": true,
+  "elapsed_seconds": 9.78,
+  "stdout_tail": "METRIC accuracy=0.8583333333333333",
+  "error": ""
+}

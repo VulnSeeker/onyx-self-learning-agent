@@ -1,0 +1,18 @@
+{
+  "task_id": "hard7r",
+  "name": "transformers_retry",
+  "expected_library": "transformers",
+  "prompt": "Fine-tune distilbert-base-uncased for 1 epoch on 500 samples from the 'stanfordnlp/imdb' dataset using HuggingFace Transformers. If transformers is unavailable, fall back to TF-IDF + Logistic Regression on sklearn's 20newsgroups dataset. Print: METRIC accuracy=<value>",
+  "timestamp": "2026-10-12T15:26:24.350313",
+  "library": "transformers",
+  "library_matched": true,
+  "dataset": "IMDB Movie Reviews",
+  "approach": "Fine-tune DistilBert on 500 training samples",
+  "train_code_len": 2059,
+  "metric_raw": null,
+  "metric_value": null,
+  "success": false,
+  "elapsed_seconds": 15.32,
+  "stdout_tail": "[stderr]\nTraceback (most recent call last):\n  File \"/tmp/onyx_sbx_7ydrnf5a/snippet.py\", line 3, in <module>\n    from transformers import DistilBertTokenizerFast, DistilBertForSequenceClassification, AdamW\nImportError: cannot import name 'AdamW' from 'transformers' (/usr/local/lib/python3.13/dist-packages/transformers/__init__.py)",
+  "error": ""
+}

@@ -1,0 +1,16 @@
+{
+  "task_id": "tr4",
+  "name": "breast_cancer_classification",
+  "prompt": "Train a support vector machine (SVC) on scikit-learn's built-in breast_cancer dataset using a 75/25 split. Print the accuracy on the test set as: METRIC accuracy=<value>",
+  "timestamp": "2026-10-12T14:08:04.007582",
+  "library": "sklearn",
+  "dataset": "Breast Cancer Wisconsin (Diagnostic)",
+  "approach": "Support Vector Machine (SVC) classifier",
+  "train_code_len": 546,
+  "metric_raw": "METRIC accuracy=0.958041958041958",
+  "metric_value": 0.958041958041958,
+  "success": true,
+  "elapsed_seconds": 9.39,
+  "stdout_tail": "METRIC accuracy=0.958041958041958",
+  "error": ""
+}
