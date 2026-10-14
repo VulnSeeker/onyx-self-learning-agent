@@ -23,6 +23,10 @@ import requests
 from onyx.config import CONFIG, Config
 from onyx.schemas import Source
 
+import warnings as _warnings
+_warnings.filterwarnings("ignore", category=RuntimeWarning)
+_warnings.filterwarnings("ignore", category=DeprecationWarning)
+
 log = logging.getLogger("onyx.search")
 
 
