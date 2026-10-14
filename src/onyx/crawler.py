@@ -77,7 +77,17 @@ class Crawler:
                     rp = robotparser.RobotFileParser()
                     rp.set_url(f"{root}/robots.txt")
                     try:
-                        rp.read()
+                        # Monkey-patch urllib to add timeout (robotparser doesn't expose one)
+                        import urllib.request as _ur
+                        _orig_urlopen = _ur.urlopen
+                        def _urlopen_timeout(url, *a, **kw):
+                            kw.setdefault("timeout", 5)
+                            return _orig_urlopen(url, *a, **kw)
+                        _ur.urlopen = _urlopen_timeout
+                        try:
+                            rp.read()
+                        finally:
+                            _ur.urlopen = _orig_urlopen
                     except Exception:  # noqa: BLE001
                         rp = None
                     self._robots_cache[root] = rp
