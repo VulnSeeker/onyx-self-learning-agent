@@ -18,7 +18,11 @@ Onyx is a self-learning agent that acquires skills on demand. Give it a task —
 No manual skill configuration. No pre-loaded knowledge. Just a task.
 
 ---
+## 📸 Screenshots
 
+| Web Dashboard | Terminal Execution |
+| :---: | :---: |
+| ![Onyx Dashboard](demo/dashboard.png) | ![Onyx Terminal Output](demo/terminal.png) |
 ## Table of Contents
 
 - [What It Does](#what-it-does)
